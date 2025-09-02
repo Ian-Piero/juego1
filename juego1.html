@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Atrapa Monedas — Juego Básico</title>
+<style>
+  :root{--bg:#0b1221; --card:#0f1724; --accent:#ffd166; --muted:#98a0b3}
+  html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Arial;background:linear-gradient(180deg,var(--bg),#071026);color:#e6eef8}
+  .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{width:520px;background:linear-gradient(180deg,#07102666,#071026cc);border-radius:12px;padding:16px;box-shadow:0 8px 30px rgba(2,6,23,.6)}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  h1{font-size:18px;margin:0}
+  .info{font-size:13px;color:var(--muted)}
+  canvas{display:block;background:linear-gradient(180deg,#082633,#021221);border-radius:8px;margin:8px auto;box-shadow:0 6px 18px rgba(0,0,0,.6)}
+  .controls{display:flex;gap:8px;justify-content:center;margin-top:8px}
+  button{background:var(--accent);border:0;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+  .small{font-size:13px;color:var(--muted);text-align:center;margin-top:8px}
+  .center{display:flex;gap:6px;align-items:center}
+  .hud{display:flex;gap:10px;align-items:center}
+  .hud span{background:#06131b6b;padding:6px 10px;border-radius:8px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" role="application" aria-label="Juego Atrapa Monedas">
+    <header>
+      <h1>Atrapa Monedas</h1>
+      <div class="info">Mueve la paleta con el mouse o ← →.</div>
+    </header>
+
+    <canvas id="game" width="480" height="640" aria-label="Área de juego"></canvas>
+
+    <div class="controls">
+      <button id="startBtn">Iniciar / Reiniciar</button>
+      <button id="pauseBtn">Pausa</button>
+    </div>
+
+    <div class="small">
+      <div class="hud" style="justify-content:space-between;">
+        <span id="score">Puntaje: 0</span>
+        <span id="lives">Vidas: 3</span>
+        <span id="level">Nivel: 1</span>
+      </div>
+      <p style="margin-top:8px">Atrapa las monedas doradas. Si fallas 3 veces, game over.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Juego: Atrapa Monedas - un solo archivo HTML
+   - Controles: mouse para mover la paleta; teclas ← y →.
+   - Lógica: monedas caen; si las atrapas sumas puntos; si tocan suelo, pierdes vidas.
+*/
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const levelEl = document.getElementById('level');
+
+const W = canvas.width, H = canvas.height;
+
+let game = {
+  running:false,
+  paused:false,
+  score:0,
+  lives:3,
+  level:1,
+  spawnInterval:900, // ms
+  lastSpawn:0,
+  speedMultiplier:1
+};
+
+const paddle = {
+  w:100,
+  h:14,
+  x: (W-100)/2,
+  y: H-40,
+  speed:8
+};
+
+let keys = {};
+let mouseX = paddle.x + paddle.w/2;
+let coins = [];
+
+/* Eventos */
+canvas.addEventListener('mousemove', (e)=> {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = e.clientX - rect.left;
+});
+window.addEventListener('keydown', (e)=> keys[e.key]=true);
+window.addEventListener('keyup', (e)=> keys[e.key]=false);
+
+startBtn.addEventListener('click', initGame);
+pauseBtn.addEventListener('click', ()=> {
+  if(!game.running) return;
+  game.paused = !game.paused;
+  pauseBtn.textContent = game.paused ? 'Reanudar' : 'Pausa';
+});
+
+function initGame(){
+  game.running = true;
+  game.paused = false;
+  pauseBtn.textContent = 'Pausa';
+  game.score = 0;
+  game.lives = 3;
+  game.level = 1;
+  game.spawnInterval = 900;
+  game.speedMultiplier = 1;
+  coins = [];
+  game.lastSpawn = performance.now();
+  paddle.x = (W-paddle.w)/2;
+  updateHUD();
+  loop(performance.now());
+}
+
+/* Crear monedas */
+function spawnCoin(){
+  const size = 18 + Math.random()*10;
+  coins.push({
+    x: Math.random()*(W - size),
+    y: -size,
+    r: size/2,
+    vy: 1.6 + Math.random()*1.4
+  });
+}
+
+/* Actualizar HUD */
+function updateHUD(){
+  scoreEl.textContent = 'Puntaje: ' + game.score;
+  livesEl.textContent = 'Vidas: ' + game.lives;
+  levelEl.textContent = 'Nivel: ' + game.level;
+}
+
+/* Colisiones AABB circular simple */
+function checkCollisionCoinPaddle(coin){
+  const cx = coin.x + coin.r;
+  const cy = coin.y + coin.r;
+  const px = paddle.x;
+  const py = paddle.y;
+  if (cy + coin.r >= py && cy - coin.r <= py + paddle.h) {
+    if (cx >= px && cx <= px + paddle.w) return true;
+  }
+  return false;
+}
+
+/* Lógica del frame */
+function update(dt, now){
+  if(!game.running || game.paused) return;
+
+  // entrada teclado
+  if(keys['ArrowLeft'] || keys['a']) paddle.x -= paddle.speed * (dt/16);
+  if(keys['ArrowRight'] || keys['d']) paddle.x += paddle.speed * (dt/16);
+
+  // entrada mouse (suavizado)
+  const targetX = mouseX - paddle.w/2;
+  paddle.x += (targetX - paddle.x) * 0.18;
+
+  // límites
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+  // spawn monedas según nivel/tiempo
+  if (now - game.lastSpawn > game.spawnInterval) {
+    spawnCoin();
+    game.lastSpawn = now;
+  }
+
+  // actualizar monedas
+  for(let i=coins.length-1;i>=0;i--){
+    const c = coins[i];
+    c.y += c.vy * game.speedMultiplier * (dt/16);
+
+    // colisión con paleta
+    if (checkCollisionCoinPaddle(c)){
+      coins.splice(i,1);
+      game.score += 10;
+      // cada 100 puntos sube nivel
+      if (game.score % 100 === 0) {
+        game.level += 1;
+        game.speedMultiplier += 0.15;
+        game.spawnInterval = Math.max(300, game.spawnInterval - 80);
+      }
+      updateHUD();
+      continue;
+    }
+
+    // si pasa el suelo -> pierdes vida
+    if (c.y - c.r > H) {
+      coins.splice(i,1);
+      game.lives -= 1;
+      updateHUD();
+      if (game.lives <= 0) {
+        game.running = false;
+      }
+    }
+  }
+}
+
+/* Dibujado */
+function draw(){
+  // fondo
+  ctx.clearRect(0,0,W,H);
+  // decorativo: gradiente de cielo
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'rgba(5,18,36,0.6)');
+  grad.addColorStop(1,'rgba(2,8,20,0.6)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
+
+  // paleta
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+  // sombra
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(paddle.x+6, paddle.y+8, paddle.w-12, 3);
+
+  // monedas
+  for(const c of coins){
+    // borde
+    ctx.beginPath();
+    ctx.arc(c.x + c.r, c.y + c.r, c.r, 0, Math.PI*2);
+    ctx.fillStyle = '#c48f00';
+    ctx.fill();
+    // brillo
+    ctx.beginPath();
+    ctx.arc(c.x + c.r - c.r*0.35, c.y + c.r - c.r*0.45, c.r*0.35, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fill();
+    // detalle
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.fillRect(c.x + c.r - 1.5, c.y + c.r + 3, 3, 3);
+  }
+
+  // overlay hud en canvas (opcional)
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.fillRect(8,8,120,36);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px Inter, Arial';
+  ctx.fillText('Puntaje: ' + game.score, 14, 28);
+
+  // mensajes de pausa o game over
+  if (game.paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#fff';
+    ctx.font = '28px Inter, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSA', W/2, H/2);
+    ctx.textAlign = 'start';
+  } else if (!game.running && game.lives <= 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#ffd166';
+    ctx.font = '28px Inter, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', W/2, H/2 - 8);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px Inter, Arial';
+    ctx.fillText('Puntaje final: ' + game.score, W/2, H/2 + 22);
+    ctx.textAlign = 'start';
+  }
+}
+
+/* Loop principal */
+let lastTime = performance.now();
+function loop(now){
+  const dt = Math.min(50, now - lastTime); // delta cap
+  if (game.running && !game.paused) update(dt, now);
+  draw();
+  lastTime = now;
+  requestAnimationFrame(loop);
+}
+
+// inicia el loop visual aunque no corra la lógica para ver pantalla inicial
+requestAnimationFrame(loop);
+
+// pequeña ayuda: iniciar automáticamente al cargar
+// window.onload = initGame; // descomenta si quieres auto-inicio
+</script>
+</body>
+</html>
